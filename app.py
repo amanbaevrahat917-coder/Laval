@@ -85,6 +85,16 @@ def init_supabase():
 
 supabase: Client | None = init_supabase()
 
+def find_drug_images(prefix: str) -> list:
+    found = []
+    for suffix in ("_box", "_banner", ""):
+        for ext in ("jpg", "jpeg", "png", "webp"):
+            path = f"{prefix}{suffix}.{ext}"
+            if os.path.exists(path):
+                found.append(path)
+                break
+    return found
+
 # --- СЦЕНАРИИ ---
 SCENARIOS = {
     "Лаваль vs Волвит (Биотин / акне)": {
@@ -285,6 +295,11 @@ with st.sidebar:
     with st.container(border=True):
         st.markdown(f"**Препарат:** {scenario['drug']}")
         st.markdown(f"**Конкурент:** `{scenario['competitor']}`")
+
+        prefix = "laval" if "Лаваль" in scenario_name else "glitz"
+        imgs = find_drug_images(prefix)
+        for img in imgs:
+            st.image(img, use_container_width=True)
 
     if st.button("🔄 Начать диалог заново", use_container_width=True):
         st.session_state.messages = []
