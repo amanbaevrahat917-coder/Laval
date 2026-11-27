@@ -22,7 +22,7 @@ st.markdown("""
         padding: 1.4rem 1.6rem;
         border-radius: 18px;
         color: white;
-        margin-bottom: 1.3rem;
+        margin-bottom: 1.1rem;
         box-shadow: 0 8px 24px rgba(11, 61, 145, 0.25);
         border: 1px solid rgba(255, 255, 255, 0.15);
     }
@@ -72,6 +72,7 @@ MODEL_NAME = get_secret("MODEL_NAME", "google/gemini-2.5-flash")
 SUPABASE_URL = get_secret("SUPABASE_URL", "")
 SUPABASE_KEY = get_secret("SUPABASE_KEY", "")
 RESULTS_FILE = "results.csv"
+TRANSCRIPT_SEPARATOR = "\n\n===TRANSCRIPT_START===\n"
 
 @st.cache_resource
 def init_supabase():
@@ -83,6 +84,13 @@ def init_supabase():
     return None
 
 supabase: Client | None = init_supabase()
+
+def find_drug_image(base_name: str):
+    for ext in ("png", "jpg", "jpeg", "webp"):
+        path = f"{base_name}.{ext}"
+        if os.path.exists(path):
+            return path
+    return None
 
 # --- СЦЕНАРИИ ---
 SCENARIOS = {
@@ -148,15 +156,33 @@ SCENARIOS = {
     }
 }
 
-# --- РАБОТА С БАЗОЙ (SUPABASE + FALLBACK CSV) ---
-def save_result(employee_name: str, scenario_name: str, score: str, feedback: str):
+# --- ФОРМАТИРОВАНИЕ ДИАЛОГА И РАБОТА С БАЗОЙ ---
+def format_transcript(messages: list) -> str:
+    lines = []
+    for m in messages:
+        if m["role"] == "user" and m["content"].strip().upper() == "РАЗБОР":
+            break
+        role_label = "🧑‍💼 **Сотрудник:**" if m["role"] == "user" else "👩‍⚕️ **Асель Аскаровна:**"
+        lines.append(f"{role_label} {m['content']}")
+    return "\n\n".join(lines)
+
+def split_feedback_and_transcript(raw_text: str):
+    if not isinstance(raw_text, str):
+        return "", ""
+    if TRANSCRIPT_SEPARATOR in raw_text:
+        feedback_part, transcript_part = raw_text.split(TRANSCRIPT_SEPARATOR, 1)
+        return feedback_part.strip(), transcript_part.strip()
+    return raw_text.strip(), ""
+
+def save_result(employee_name: str, scenario_name: str, score: str, feedback: str, transcript: str):
+    combined_payload = f"{feedback}{TRANSCRIPT_SEPARATOR}{transcript}"
     if supabase:
         try:
             supabase.table("spin_results").insert({
                 "employee_name": employee_name,
                 "scenario": scenario_name,
                 "score": score,
-                "feedback": feedback
+                "feedback": combined_payload
             }).execute()
             return
         except Exception as e:
@@ -167,7 +193,7 @@ def save_result(employee_name: str, scenario_name: str, score: str, feedback: st
         "Сотрудник": employee_name,
         "Сценарий": scenario_name,
         "Оценка": score,
-        "Разбор": feedback
+        "Разбор": combined_payload
     }])
     if os.path.exists(RESULTS_FILE):
         df = pd.read_csv(RESULTS_FILE)
@@ -247,16 +273,19 @@ with st.sidebar:
         st.markdown(f"**Препарат:** {scenario['drug']}")
         st.markdown(f"**Конкурент:** `{scenario['competitor']}`")
 
+        img_path = None
+        if "Лаваль" in scenario_name:
+            img_path = find_drug_image("laval")
+        elif "Глиц" in scenario_name:
+            img_path = find_drug_image("glitz")
+
+        if img_path:
+            st.image(img_path, use_container_width=True)
+
     if st.button("🔄 Начать диалог заново", use_container_width=True):
         st.session_state.messages = []
         st.session_state.admin_mode = False
         st.rerun()
-
-    evaluate_clicked = st.button(
-        "📊 Завершить и сохранить",
-        use_container_width=True,
-        type="primary"
-    )
 
     st.divider()
 
@@ -288,7 +317,7 @@ if st.session_state.admin_mode:
         st.markdown("""
         <div class="hero-card">
             <h1>📊 Панель руководителя</h1>
-            <p>Результаты и разборы тренировок медицинских представителей</p>
+            <p>Результаты, переписки и разборы тренировок сотрудников</p>
         </div>
         """, unsafe_allow_html=True)
     with col_back:
@@ -326,18 +355,24 @@ if st.session_state.admin_mode:
                 type="primary"
             )
 
-        # Полноширинная таблица
         st.dataframe(
             filtered_df[["Дата и время", "Сотрудник", "Сценарий", "Оценка"]],
             use_container_width=True,
             hide_index=True
         )
 
-        # Подробный просмотр разборов по каждому сотруднику
-        st.subheader("📝 Детальные разборы диалогов")
+        st.subheader("📝 Переписки и разборы сотрудников")
         for idx, row in filtered_df.iterrows():
+            feedback_text, transcript_text = split_feedback_and_transcript(row["Разбор"])
             with st.expander(f"{row['Дата и время']} — {row['Сотрудник']} ({row['Оценка']}) • {row['Сценарий']}"):
-                st.markdown(row["Разбор"])
+                t_chat, t_eval = st.tabs(["💬 Переписка сотрудника", "📊 Разбор от ИИ"])
+                with t_chat:
+                    if transcript_text:
+                        st.markdown(transcript_text)
+                    else:
+                        st.caption("Для этой старой записи переписка ещё не сохранялась.")
+                with t_eval:
+                    st.markdown(feedback_text)
 
     st.stop()
 
@@ -347,10 +382,20 @@ if st.session_state.admin_mode:
 st.markdown(f"""
 <div class="hero-card">
     <h1>💊 SPIN-Тренажёр: Глиц и Лаваль</h1>
-    <p>Врач: <b>Асель Аскаровна</b> • Сценарий: <b>{scenario_name}</b></p>
+    <p>Сценарий: <b>{scenario_name}</b></p>
     <span class="badge">🧑‍💼 {st.session_state.employee_name}</span>
 </div>
 """, unsafe_allow_html=True)
+
+# --- ЭКРАНЧИК / ДОСЬЕ ВРАЧА ---
+with st.container(border=True):
+    st.markdown("#### 👩‍⚕️ Карточка врача: Асель Аскаровна")
+    st.markdown(
+        f"**Специальность:** Врач-терапевт на приёме в поликлинике  \n"
+        f"**Характер:** Занятая, скептичная, не любит шаблонное «впаривание» в лоб. Ценит чёткие факты и заботу о пациентах.  \n"
+        f"**Текущее назначение:** Обычно рекомендует **{scenario['competitor']}**.  \n"
+        f"**Ваша задача:** Провести визит по технике **SPIN** (Ситуационный → Проблемный → Извлекающий → Направляющий) и подвести врача к назначению нашего препарата."
+    )
 
 SYSTEM_PROMPT = f"""
 СТРОГОЕ РАСПРЕДЕЛЕНИЕ РОЛЕЙ (НЕ ПУТАТЬ!):
@@ -390,15 +435,22 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"], avatar=avatar):
         st.markdown(msg["content"])
 
-user_input = st.chat_input("Напишите реплику врачу...")
+# --- КНОПКА ЗАВЕРШЕНИЯ ПРЯМО В ЧАТЕ ---
+evaluate_clicked = False
+if st.session_state.messages:
+    st.write("")
+    evaluate_clicked = st.button(
+        "📊 Завершить визит и сохранить результат",
+        use_container_width=True,
+        type="primary"
+    )
+
+user_input = st.chat_input("Напишите реплику Асель Аскаровне...")
 is_evaluation = False
 
 if evaluate_clicked:
-    if not st.session_state.messages:
-        st.warning("Сначала проведите хотя бы небольшой диалог с врачом!")
-    else:
-        user_input = "РАЗБОР"
-        is_evaluation = True
+    user_input = "РАЗБОР"
+    is_evaluation = True
 
 if user_input:
     if user_input.strip().upper() == "РАЗБОР":
@@ -428,5 +480,6 @@ if user_input:
 
     if is_evaluation:
         score = extract_score(reply)
-        save_result(st.session_state.employee_name, scenario_name, score, reply)
-        st.toast(f"Результат ({score}) сохранён!", icon="✅")
+        transcript = format_transcript(st.session_state.messages)
+        save_result(st.session_state.employee_name, scenario_name, score, reply, transcript)
+        st.toast(f"Результат ({score}) и переписка сохранены!", icon="✅")
