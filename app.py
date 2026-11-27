@@ -10,7 +10,7 @@ from supabase import create_client, Client
 st.set_page_config(
     page_title="Seltfar SPIN-Тренажёр",
     page_icon="💊",
-    layout="centered",
+    layout="wide",
     initial_sidebar_state="expanded"
 )
 
@@ -19,23 +19,23 @@ st.markdown("""
 <style>
     .hero-card {
         background: linear-gradient(135deg, #0b3d91 0%, #1976d2 55%, #00acc1 100%);
-        padding: 1.5rem 1.8rem;
+        padding: 1.4rem 1.6rem;
         border-radius: 18px;
         color: white;
-        margin-bottom: 1.4rem;
+        margin-bottom: 1.3rem;
         box-shadow: 0 8px 24px rgba(11, 61, 145, 0.25);
         border: 1px solid rgba(255, 255, 255, 0.15);
     }
     .hero-card h1 {
         color: #ffffff !important;
         margin: 0;
-        font-size: 1.75rem;
+        font-size: 1.65rem;
         font-weight: 700;
         letter-spacing: -0.3px;
     }
     .hero-card p {
         color: rgba(255, 255, 255, 0.9) !important;
-        margin: 0.4rem 0 0 0;
+        margin: 0.35rem 0 0 0;
         font-size: 0.95rem;
     }
     .badge {
@@ -52,10 +52,6 @@ st.markdown("""
         border-radius: 10px;
         font-weight: 600;
         border: 1px solid rgba(128, 128, 128, 0.2);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
-    }
-    .stButton > button:hover {
-        transform: translateY(-1px);
     }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -212,6 +208,8 @@ def extract_score(text: str) -> str:
 # --- ЭКРАН ВХОДА ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+if "admin_mode" not in st.session_state:
+    st.session_state.admin_mode = False
 
 if not st.session_state.authenticated:
     st.markdown("""
@@ -239,7 +237,7 @@ if not st.session_state.authenticated:
                 st.error("Неверный пароль доступа.")
     st.stop()
 
-# --- БОКОВАЯ ПАНЕЛЬ: ПАРАМЕТРЫ ВИЗИТА + АДМИНКА ---
+# --- БОКОВАЯ ПАНЕЛЬ: ПАРАМЕТРЫ ВИЗИТА + ВХОД В АДМИНКУ ---
 with st.sidebar:
     st.header("📋 Параметры визита")
     scenario_name = st.selectbox("Выберите сценарий:", list(SCENARIOS.keys()))
@@ -251,6 +249,7 @@ with st.sidebar:
 
     if st.button("🔄 Начать диалог заново", use_container_width=True):
         st.session_state.messages = []
+        st.session_state.admin_mode = False
         st.rerun()
 
     evaluate_clicked = st.button(
@@ -261,44 +260,90 @@ with st.sidebar:
 
     st.divider()
 
-    # --- ПАНЕЛЬ РУКОВОДИТЕЛЯ ---
-    with st.expander("🔒 Панель руководителя"):
+    # --- КОМПАКТНЫЙ ВХОД В ПАНЕЛЬ РУКОВОДИТЕЛЯ ---
+    with st.expander("🔒 Панель руководителя", expanded=st.session_state.admin_mode):
         db_status = "🟢 Supabase подключён" if supabase else "🟡 Локальный CSV"
         st.caption(db_status)
-        admin_pass = st.text_input("Пароль админа", type="password", key="admin_pass_input")
 
-        if admin_pass == ADMIN_PASSWORD:
-            df = load_results()
-            if df.empty:
-                st.info("Пока нет сохранённых результатов.")
-            else:
-                c1, c2 = st.columns(2)
-                c1.metric("Тренировок", len(df))
-                c2.metric("Людей", df["Сотрудник"].nunique())
+        if not st.session_state.admin_mode:
+            admin_pass = st.text_input("Пароль админа", type="password", key="admin_pass_input")
+            if st.button("Открыть на весь экран", use_container_width=True, type="primary"):
+                if admin_pass == ADMIN_PASSWORD:
+                    st.session_state.admin_mode = True
+                    st.rerun()
+                else:
+                    st.error("Неверный пароль.")
+        else:
+            st.success("Режим руководителя активен")
+            if st.button("⬅️ Вернуться в тренажёр", use_container_width=True):
+                st.session_state.admin_mode = False
+                st.rerun()
 
-                employees = ["Все"] + sorted(df["Сотрудник"].unique().tolist())
-                selected_emp = st.selectbox("Фильтр:", employees)
-                filtered_df = df if selected_emp == "Все" else df[df["Сотрудник"] == selected_emp]
+# =========================================================
+# РЕЖИМ 1: ПОЛНОЭКРАННАЯ ПАНЕЛЬ РУКОВОДИТЕЛЯ
+# =========================================================
+if st.session_state.admin_mode:
+    col_title, col_back = st.columns([4, 1])
+    with col_title:
+        st.markdown("""
+        <div class="hero-card">
+            <h1>📊 Панель руководителя</h1>
+            <p>Результаты и разборы тренировок медицинских представителей</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_back:
+        if st.button("⬅️ Назад к чату", use_container_width=True):
+            st.session_state.admin_mode = False
+            st.rerun()
 
-                st.dataframe(
-                    filtered_df[["Дата и время", "Сотрудник", "Оценка"]],
-                    use_container_width=True,
-                    hide_index=True
-                )
+    df = load_results()
+    if df.empty:
+        st.info("Пока нет сохранённых результатов. Когда сотрудники завершат тренировку, данные появятся здесь.")
+    else:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Всего тренировок", len(df))
+        m2.metric("Сотрудников", df["Сотрудник"].nunique())
+        m3.metric("Сценариев пройдено", df["Сценарий"].nunique())
 
-                csv_data = filtered_df.to_csv(index=False).encode("utf-8-sig")
-                st.download_button(
-                    label="📥 Скачать отчёт (Excel)",
-                    data=csv_data,
-                    file_name=f"spin_results_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    type="primary"
-                )
-        elif admin_pass:
-            st.error("Неверный пароль.")
+        st.divider()
 
-# --- ОСНОВНОЙ ЧАТ ---
+        c_filter, c_dl = st.columns([2, 1])
+        with c_filter:
+            employees = ["Все сотрудники"] + sorted(df["Сотрудник"].unique().tolist())
+            selected_emp = st.selectbox("Фильтр по сотруднику:", employees)
+            filtered_df = df if selected_emp == "Все сотрудники" else df[df["Сотрудник"] == selected_emp]
+
+        with c_dl:
+            st.write("")
+            st.write("")
+            csv_data = filtered_df.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                label="📥 Скачать Excel (CSV)",
+                data=csv_data,
+                file_name=f"spin_results_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                type="primary"
+            )
+
+        # Полноширинная таблица
+        st.dataframe(
+            filtered_df[["Дата и время", "Сотрудник", "Сценарий", "Оценка"]],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # Подробный просмотр разборов по каждому сотруднику
+        st.subheader("📝 Детальные разборы диалогов")
+        for idx, row in filtered_df.iterrows():
+            with st.expander(f"{row['Дата и время']} — {row['Сотрудник']} ({row['Оценка']}) • {row['Сценарий']}"):
+                st.markdown(row["Разбор"])
+
+    st.stop()
+
+# =========================================================
+# РЕЖИМ 2: ОСНОВНОЙ ЧАТ ТРЕНАЖЁРА
+# =========================================================
 st.markdown(f"""
 <div class="hero-card">
     <h1>💊 SPIN-Тренажёр: Глиц и Лаваль</h1>
