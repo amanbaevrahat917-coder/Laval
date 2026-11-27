@@ -85,13 +85,6 @@ def init_supabase():
 
 supabase: Client | None = init_supabase()
 
-def find_drug_image(base_name: str):
-    for ext in ("png", "jpg", "jpeg", "webp"):
-        path = f"{base_name}.{ext}"
-        if os.path.exists(path):
-            return path
-    return None
-
 # --- СЦЕНАРИИ ---
 SCENARIOS = {
     "Лаваль vs Волвит (Биотин / акне)": {
@@ -203,6 +196,7 @@ def save_result(employee_name: str, scenario_name: str, score: str, feedback: st
     df.to_csv(RESULTS_FILE, index=False)
 
 def load_results():
+    cols = ["ID", "Дата и время", "Сотрудник", "Сценарий", "Оценка", "Разбор"]
     if supabase:
         try:
             res = supabase.table("spin_results").select("*").order("created_at", desc=True).execute()
@@ -210,19 +204,51 @@ def load_results():
                 df = pd.DataFrame(res.data)
                 df["created_at"] = pd.to_datetime(df["created_at"]).dt.strftime("%Y-%m-%d %H:%M")
                 return df.rename(columns={
+                    "id": "ID",
                     "created_at": "Дата и время",
                     "employee_name": "Сотрудник",
                     "scenario": "Сценарий",
                     "score": "Оценка",
                     "feedback": "Разбор"
-                })[["Дата и время", "Сотрудник", "Сценарий", "Оценка", "Разбор"]]
-            return pd.DataFrame(columns=["Дата и время", "Сотрудник", "Сценарий", "Оценка", "Разбор"])
+                })[cols]
+            return pd.DataFrame(columns=cols)
         except Exception:
             pass
 
     if os.path.exists(RESULTS_FILE):
-        return pd.read_csv(RESULTS_FILE)
-    return pd.DataFrame(columns=["Дата и время", "Сотрудник", "Сценарий", "Оценка", "Разбор"])
+        df = pd.read_csv(RESULTS_FILE)
+        df.insert(0, "ID", df.index)
+        return df[cols]
+    return pd.DataFrame(columns=cols)
+
+def delete_single_result(row_id):
+    if supabase:
+        try:
+            supabase.table("spin_results").delete().eq("id", int(row_id)).execute()
+            return True
+        except Exception as e:
+            st.error(f"Не удалось удалить из Supabase: {e}")
+            return False
+    elif os.path.exists(RESULTS_FILE):
+        df = pd.read_csv(RESULTS_FILE)
+        if row_id in df.index:
+            df = df.drop(index=row_id).reset_index(drop=True)
+            df.to_csv(RESULTS_FILE, index=False)
+            return True
+    return False
+
+def delete_all_results():
+    if supabase:
+        try:
+            supabase.table("spin_results").delete().gt("id", 0).execute()
+            return True
+        except Exception as e:
+            st.error(f"Не удалось очистить Supabase: {e}")
+            return False
+    elif os.path.exists(RESULTS_FILE):
+        os.remove(RESULTS_FILE)
+        return True
+    return False
 
 def extract_score(text: str) -> str:
     match = re.search(r"ИТОГОВАЯ ОЦЕНКА:\s*(\d+(?:[.,]\d+)?\s*/\s*10)", text, re.IGNORECASE)
@@ -272,15 +298,6 @@ with st.sidebar:
     with st.container(border=True):
         st.markdown(f"**Препарат:** {scenario['drug']}")
         st.markdown(f"**Конкурент:** `{scenario['competitor']}`")
-
-        img_path = None
-        if "Лаваль" in scenario_name:
-            img_path = find_drug_image("laval")
-        elif "Глиц" in scenario_name:
-            img_path = find_drug_image("glitz")
-
-        if img_path:
-            st.image(img_path, use_container_width=True)
 
     if st.button("🔄 Начать диалог заново", use_container_width=True):
         st.session_state.messages = []
@@ -345,7 +362,7 @@ if st.session_state.admin_mode:
         with c_dl:
             st.write("")
             st.write("")
-            csv_data = filtered_df.to_csv(index=False).encode("utf-8-sig")
+            csv_data = filtered_df.drop(columns=["ID"]).to_csv(index=False).encode("utf-8-sig")
             st.download_button(
                 label="📥 Скачать Excel (CSV)",
                 data=csv_data,
@@ -361,8 +378,16 @@ if st.session_state.admin_mode:
             hide_index=True
         )
 
+        # Очистка всей базы с защитой от случайного нажатия
+        with st.expander("⚠️ Очистить всю базу результатов"):
+            confirm_clear = st.checkbox("Я уверен(а), что хочу удалить все записи безвозвратно")
+            if st.button("🗑️ Удалить ВСЕ результаты", disabled=not confirm_clear, type="primary"):
+                if delete_all_results():
+                    st.toast("База очищена!", icon="🗑️")
+                    st.rerun()
+
         st.subheader("📝 Переписки и разборы сотрудников")
-        for idx, row in filtered_df.iterrows():
+        for _, row in filtered_df.iterrows():
             feedback_text, transcript_text = split_feedback_and_transcript(row["Разбор"])
             with st.expander(f"{row['Дата и время']} — {row['Сотрудник']} ({row['Оценка']}) • {row['Сценарий']}"):
                 t_chat, t_eval = st.tabs(["💬 Переписка сотрудника", "📊 Разбор от ИИ"])
@@ -373,6 +398,12 @@ if st.session_state.admin_mode:
                         st.caption("Для этой старой записи переписка ещё не сохранялась.")
                 with t_eval:
                     st.markdown(feedback_text)
+
+                st.divider()
+                if st.button("🗑️ Удалить эту запись", key=f"del_{row['ID']}"):
+                    if delete_single_result(row["ID"]):
+                        st.toast("Запись удалена!", icon="🗑️")
+                        st.rerun()
 
     st.stop()
 
