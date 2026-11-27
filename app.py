@@ -8,7 +8,7 @@ from supabase import create_client, Client
 
 # --- НАСТРОЙКА СТРАНИЦЫ ---
 st.set_page_config(
-    page_title="Seltfar SPIN-Тренажёр",
+    page_title="Тренажер ОТС (Глиц/Лаваль)",
     page_icon="💊",
     layout="wide",
     initial_sidebar_state="expanded"
