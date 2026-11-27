@@ -4,6 +4,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
+from supabase import create_client, Client
 
 # --- НАСТРОЙКА СТРАНИЦЫ ---
 st.set_page_config(
@@ -13,37 +14,55 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- КАСТОМНЫЙ ДИЗАЙН (БЕЗ СЛОМАННОГО ФОНА) ---
+# --- СОВРЕМЕННЫЙ ДИЗАЙН (АДАПТИВНЫЙ ПОД ТЁМНУЮ И СВЕТЛУЮ ТЕМЫ) ---
 st.markdown("""
 <style>
-    .main-header {
-        background: linear-gradient(135deg, #0f4c81 0%, #1e88e5 100%);
-        padding: 1.4rem;
-        border-radius: 16px;
+    .hero-card {
+        background: linear-gradient(135deg, #0b3d91 0%, #1976d2 55%, #00acc1 100%);
+        padding: 1.5rem 1.8rem;
+        border-radius: 18px;
         color: white;
-        margin-bottom: 1.5rem;
-        box-shadow: 0 4px 15px rgba(15, 76, 129, 0.2);
+        margin-bottom: 1.4rem;
+        box-shadow: 0 8px 24px rgba(11, 61, 145, 0.25);
+        border: 1px solid rgba(255, 255, 255, 0.15);
     }
-    .main-header h1 {
-        color: white !important;
+    .hero-card h1 {
+        color: #ffffff !important;
         margin: 0;
-        font-size: 1.7rem;
+        font-size: 1.75rem;
+        font-weight: 700;
+        letter-spacing: -0.3px;
     }
-    .main-header p {
-        color: #e3f2fd !important;
-        margin: 0.3rem 0 0 0;
+    .hero-card p {
+        color: rgba(255, 255, 255, 0.9) !important;
+        margin: 0.4rem 0 0 0;
         font-size: 0.95rem;
+    }
+    .badge {
+        display: inline-block;
+        background: rgba(255, 255, 255, 0.2);
+        padding: 0.2rem 0.65rem;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        margin-top: 0.6rem;
+        color: #ffffff !important;
     }
     .stButton > button {
         border-radius: 10px;
         font-weight: 600;
+        border: 1px solid rgba(128, 128, 128, 0.2);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .stButton > button:hover {
+        transform: translateY(-1px);
     }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- СЕКРЕТЫ И ПАРОЛИ ---
+# --- СЕКРЕТЫ ---
 def get_secret(key, default=""):
     try:
         return st.secrets.get(key, default)
@@ -54,7 +73,20 @@ API_KEY = get_secret("OPENROUTER_API_KEY", "")
 APP_PASSWORD = get_secret("APP_PASSWORD", "seltfar2026")
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "admin2026")
 MODEL_NAME = get_secret("MODEL_NAME", "google/gemini-2.5-flash")
+SUPABASE_URL = get_secret("SUPABASE_URL", "")
+SUPABASE_KEY = get_secret("SUPABASE_KEY", "")
 RESULTS_FILE = "results.csv"
+
+@st.cache_resource
+def init_supabase():
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            return create_client(SUPABASE_URL, SUPABASE_KEY)
+        except Exception:
+            return None
+    return None
+
+supabase: Client | None = init_supabase()
 
 # --- СЦЕНАРИИ ---
 SCENARIOS = {
@@ -120,8 +152,20 @@ SCENARIOS = {
     }
 }
 
-# --- БАЗА РЕЗУЛЬТАТОВ ---
+# --- РАБОТА С БАЗОЙ (SUPABASE + FALLBACK CSV) ---
 def save_result(employee_name: str, scenario_name: str, score: str, feedback: str):
+    if supabase:
+        try:
+            supabase.table("spin_results").insert({
+                "employee_name": employee_name,
+                "scenario": scenario_name,
+                "score": score,
+                "feedback": feedback
+            }).execute()
+            return
+        except Exception as e:
+            st.warning(f"Ошибка записи в Supabase ({e}), сохраняю локально.")
+
     new_row = pd.DataFrame([{
         "Дата и время": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "Сотрудник": employee_name,
@@ -137,6 +181,23 @@ def save_result(employee_name: str, scenario_name: str, score: str, feedback: st
     df.to_csv(RESULTS_FILE, index=False)
 
 def load_results():
+    if supabase:
+        try:
+            res = supabase.table("spin_results").select("*").order("created_at", desc=True).execute()
+            if res.data:
+                df = pd.DataFrame(res.data)
+                df["created_at"] = pd.to_datetime(df["created_at"]).dt.strftime("%Y-%m-%d %H:%M")
+                return df.rename(columns={
+                    "created_at": "Дата и время",
+                    "employee_name": "Сотрудник",
+                    "scenario": "Сценарий",
+                    "score": "Оценка",
+                    "feedback": "Разбор"
+                })[["Дата и время", "Сотрудник", "Сценарий", "Оценка", "Разбор"]]
+            return pd.DataFrame(columns=["Дата и время", "Сотрудник", "Сценарий", "Оценка", "Разбор"])
+        except Exception:
+            pass
+
     if os.path.exists(RESULTS_FILE):
         return pd.read_csv(RESULTS_FILE)
     return pd.DataFrame(columns=["Дата и время", "Сотрудник", "Сценарий", "Оценка", "Разбор"])
@@ -154,9 +215,10 @@ if "authenticated" not in st.session_state:
 
 if not st.session_state.authenticated:
     st.markdown("""
-    <div class="main-header">
+    <div class="hero-card">
         <h1>💊 SPIN-Тренажёр Медпреда</h1>
         <p>Интерактивный симулятор визитов к врачу • Глиц и Лаваль</p>
+        <span class="badge">Seltfar LTD • AI Training</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -164,7 +226,7 @@ if not st.session_state.authenticated:
         st.subheader("🔐 Вход в систему")
         emp_name = st.text_input("Ваше ФИО", placeholder="Например: Иванов Иван")
         password = st.text_input("Пароль доступа", type="password")
-        submit = st.form_submit_button("Войти", use_container_width=True, type="primary")
+        submit = st.form_submit_button("Начать тренировку", use_container_width=True, type="primary")
 
         if submit:
             if not emp_name.strip():
@@ -183,22 +245,26 @@ with st.sidebar:
     scenario_name = st.selectbox("Выберите сценарий:", list(SCENARIOS.keys()))
     scenario = SCENARIOS[scenario_name]
 
-    st.info(f"**Препарат:** {scenario['drug']}\n\n**Конкурент:** {scenario['competitor']}")
+    with st.container(border=True):
+        st.markdown(f"**Препарат:** {scenario['drug']}")
+        st.markdown(f"**Конкурент:** `{scenario['competitor']}`")
 
     if st.button("🔄 Начать диалог заново", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
 
     evaluate_clicked = st.button(
-        "📊 Завершить и сохранить результат",
+        "📊 Завершить и сохранить",
         use_container_width=True,
         type="primary"
     )
 
     st.divider()
 
-    # --- ПАНЕЛЬ РУКОВОДИТЕЛЯ ПРЯМО В САЙДБАРЕ ---
+    # --- ПАНЕЛЬ РУКОВОДИТЕЛЯ ---
     with st.expander("🔒 Панель руководителя"):
+        db_status = "🟢 Supabase подключён" if supabase else "🟡 Локальный CSV"
+        st.caption(db_status)
         admin_pass = st.text_input("Пароль админа", type="password", key="admin_pass_input")
 
         if admin_pass == ADMIN_PASSWORD:
@@ -206,11 +272,12 @@ with st.sidebar:
             if df.empty:
                 st.info("Пока нет сохранённых результатов.")
             else:
-                st.metric("Всего тренировок", len(df))
-                st.metric("Сотрудников", df["Сотрудник"].nunique())
+                c1, c2 = st.columns(2)
+                c1.metric("Тренировок", len(df))
+                c2.metric("Людей", df["Сотрудник"].nunique())
 
                 employees = ["Все"] + sorted(df["Сотрудник"].unique().tolist())
-                selected_emp = st.selectbox("Сотрудник:", employees)
+                selected_emp = st.selectbox("Фильтр:", employees)
                 filtered_df = df if selected_emp == "Все" else df[df["Сотрудник"] == selected_emp]
 
                 st.dataframe(
@@ -221,38 +288,39 @@ with st.sidebar:
 
                 csv_data = filtered_df.to_csv(index=False).encode("utf-8-sig")
                 st.download_button(
-                    label="📥 Скачать отчёт (Excel/CSV)",
+                    label="📥 Скачать отчёт (Excel)",
                     data=csv_data,
                     file_name=f"spin_results_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv",
                     use_container_width=True,
                     type="primary"
                 )
-
-                if st.button("🗑️ Очистить базу", use_container_width=True):
-                    if os.path.exists(RESULTS_FILE):
-                        os.remove(RESULTS_FILE)
-                    st.rerun()
         elif admin_pass:
             st.error("Неверный пароль.")
 
 # --- ОСНОВНОЙ ЧАТ ---
 st.markdown(f"""
-<div class="main-header">
+<div class="hero-card">
     <h1>💊 SPIN-Тренажёр: Глиц и Лаваль</h1>
-    <p>Сотрудник: <b>{st.session_state.employee_name}</b></p>
+    <p>Врач: <b>Асель Аскаровна</b> • Сценарий: <b>{scenario_name}</b></p>
+    <span class="badge">🧑‍💼 {st.session_state.employee_name}</span>
 </div>
 """, unsafe_allow_html=True)
 
 SYSTEM_PROMPT = f"""
-Ты — врач Асель Аскаровна на приёме. К тебе пришёл медпредставитель с препаратом: {scenario['drug']}.
-Твоё поведение в роли врача:
-1. {scenario['context']}
-2. Отвечай естественно и коротко (1-3 предложения), как занятой врач на приёме.
-3. Не подсказывай медпреду сам. Соглашайся с доводами и раскрывай последствия, только если медпред грамотно ведёт по воронке SPIN.
-4. Если медпред начинает продавать препарат в лоб, минуя проблемы конкурента ({scenario['competitor']}), отвечай скептически.
+СТРОГОЕ РАСПРЕДЕЛЕНИЕ РОЛЕЙ (НЕ ПУТАТЬ!):
+- ТЫ (ассистент) — ТОЛЬКО врач-терапевт Асель Аскаровна на приёме в поликлинике.
+- ПОЛЬЗОВАТЕЛЬ — медицинский представитель компании Seltfar (Сэлтфар), который пришёл к тебе продвигать препарат: {scenario['drug']}.
 
-Эталонный скрипт SPIN для этого сценария:
+ЖЕЛЕЗНЫЕ ПРАВИЛА ПОВЕДЕНИЯ ВРАЧА:
+1. НИКОГДА не говори от лица медпреда, не задавай SPIN-вопросы вместо пользователя и не называй пользователя «Асель Аскаровна» (Асель Аскаровна — это ТЫ!).
+2. Если пользователь написал непонятное слово, опечатку или набор букв (типа «Воочо» или «ывфа»), оставайся в роли врача и переспроси: «Простите, я не совсем поняла, вы ко мне по какому вопросу? У меня скоро следующий пациент».
+3. {scenario['context']}
+4. Отвечай коротко и естественно (1–3 предложения), как занятой врач на приёме.
+5. Не подсказывай медпреду сам. Соглашайся с доводами и раскрывай последствия, только если медпред грамотно ведёт тебя по воронке SPIN.
+6. Если медпред начинает продавать препарат в лоб, минуя проблемы конкурента ({scenario['competitor']}), отвечай скептически.
+
+Эталонный скрипт SPIN (используй ТОЛЬКО для понимания логики и финальной оценки, НЕ озвучивай реплики медпреда из него!):
 {scenario['reference']}
 
 Если пользователь пишет «РАЗБОР» — выйди из роли врача и дай чёткий разбор диалога по эталонному скрипту выше:
@@ -270,7 +338,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if not st.session_state.messages:
-    st.caption("👋 Начните диалог с Асель Аскаровной — поздоровайтесь и задайте первый ситуационный вопрос.")
+    st.info("👋 Поздоровайтесь с Асель Аскаровной и задайте первый ситуационный вопрос.")
 
 for msg in st.session_state.messages:
     avatar = "🧑‍💼" if msg["role"] == "user" else "👩‍⚕️"
@@ -302,7 +370,7 @@ if user_input:
     client = OpenAI(api_key=API_KEY, base_url="https://openrouter.ai/api/v1")
 
     with st.chat_message("assistant", avatar="👩‍⚕️"):
-        with st.spinner("Асель Аскаровна думает..." if not is_evaluation else "Формирую разбор и сохраняю результат..."):
+        with st.spinner("Асель Аскаровна отвечает..." if not is_evaluation else "Формирую разбор и сохраняю в базу..."):
             response = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[{"role": "system", "content": SYSTEM_PROMPT}] + st.session_state.messages,
