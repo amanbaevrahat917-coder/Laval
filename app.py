@@ -13,47 +13,31 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- КАСТОМНЫЙ ДИЗАЙН (CSS) ---
+# --- КАСТОМНЫЙ ДИЗАЙН (БЕЗ СЛОМАННОГО ФОНА) ---
 st.markdown("""
 <style>
-    /* Основной фон и шрифт */
-    .stApp {
-        background-color: #f4f7fb;
-    }
-    /* Стилизация заголовка */
     .main-header {
         background: linear-gradient(135deg, #0f4c81 0%, #1e88e5 100%);
-        padding: 1.5rem;
+        padding: 1.4rem;
         border-radius: 16px;
         color: white;
         margin-bottom: 1.5rem;
-        box-shadow: 0 4px 15px rgba(15, 76, 129, 0.15);
+        box-shadow: 0 4px 15px rgba(15, 76, 129, 0.2);
     }
     .main-header h1 {
         color: white !important;
         margin: 0;
-        font-size: 1.8rem;
+        font-size: 1.7rem;
     }
     .main-header p {
-        color: #e3f2fd;
+        color: #e3f2fd !important;
         margin: 0.3rem 0 0 0;
         font-size: 0.95rem;
     }
-    /* Карточка входа */
-    .login-box {
-        background: white;
-        padding: 2rem;
-        border-radius: 16px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.06);
-        border: 1px solid #e2e8f0;
-    }
-    /* Кнопки */
     .stButton > button {
         border-radius: 10px;
         font-weight: 600;
-        transition: all 0.2s ease;
     }
-    /* Скрываем лишнее меню Streamlit */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
@@ -67,12 +51,12 @@ def get_secret(key, default=""):
         return default
 
 API_KEY = get_secret("OPENROUTER_API_KEY", "")
-APP_PASSWORD = get_secret("APP_PASSWORD", "seltfar2026")      # Общий пароль для входа
-ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "admin2026")    # Пароль для руководителя
+APP_PASSWORD = get_secret("APP_PASSWORD", "seltfar2026")
+ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "admin2026")
 MODEL_NAME = get_secret("MODEL_NAME", "google/gemini-2.5-flash")
 RESULTS_FILE = "results.csv"
 
-# --- СЦЕНАРИИ ИЗ ТВОИХ ФАЙЛОВ ---
+# --- СЦЕНАРИИ ---
 SCENARIOS = {
     "Лаваль vs Волвит (Биотин / акне)": {
         "drug": "Лаваль (50 мкг биотина — суточная норма, без риска акне)",
@@ -136,7 +120,7 @@ SCENARIOS = {
     }
 }
 
-# --- ФУНКЦИИ ДЛЯ РАБОТЫ С БАЗОЙ РЕЗУЛЬТАТОВ ---
+# --- БАЗА РЕЗУЛЬТАТОВ ---
 def save_result(employee_name: str, scenario_name: str, score: str, feedback: str):
     new_row = pd.DataFrame([{
         "Дата и время": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -164,7 +148,7 @@ def extract_score(text: str) -> str:
     match_fallback = re.search(r"(\d+(?:[.,]\d+)?)\s*/\s*10", text)
     return f"{match_fallback.group(1)}/10" if match_fallback else "Нет оценки"
 
-# --- ЭКРАН ВХОДА (ОБЩИЙ ПАРОЛЬ) ---
+# --- ЭКРАН ВХОДА ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -193,7 +177,66 @@ if not st.session_state.authenticated:
                 st.error("Неверный пароль доступа.")
     st.stop()
 
-# --- ОСНОВНОЙ ИНТЕРФЕЙС ---
+# --- БОКОВАЯ ПАНЕЛЬ: ПАРАМЕТРЫ ВИЗИТА + АДМИНКА ---
+with st.sidebar:
+    st.header("📋 Параметры визита")
+    scenario_name = st.selectbox("Выберите сценарий:", list(SCENARIOS.keys()))
+    scenario = SCENARIOS[scenario_name]
+
+    st.info(f"**Препарат:** {scenario['drug']}\n\n**Конкурент:** {scenario['competitor']}")
+
+    if st.button("🔄 Начать диалог заново", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+
+    evaluate_clicked = st.button(
+        "📊 Завершить и сохранить результат",
+        use_container_width=True,
+        type="primary"
+    )
+
+    st.divider()
+
+    # --- ПАНЕЛЬ РУКОВОДИТЕЛЯ ПРЯМО В САЙДБАРЕ ---
+    with st.expander("🔒 Панель руководителя"):
+        admin_pass = st.text_input("Пароль админа", type="password", key="admin_pass_input")
+
+        if admin_pass == ADMIN_PASSWORD:
+            df = load_results()
+            if df.empty:
+                st.info("Пока нет сохранённых результатов.")
+            else:
+                st.metric("Всего тренировок", len(df))
+                st.metric("Сотрудников", df["Сотрудник"].nunique())
+
+                employees = ["Все"] + sorted(df["Сотрудник"].unique().tolist())
+                selected_emp = st.selectbox("Сотрудник:", employees)
+                filtered_df = df if selected_emp == "Все" else df[df["Сотрудник"] == selected_emp]
+
+                st.dataframe(
+                    filtered_df[["Дата и время", "Сотрудник", "Оценка"]],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                csv_data = filtered_df.to_csv(index=False).encode("utf-8-sig")
+                st.download_button(
+                    label="📥 Скачать отчёт (Excel/CSV)",
+                    data=csv_data,
+                    file_name=f"spin_results_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    type="primary"
+                )
+
+                if st.button("🗑️ Очистить базу", use_container_width=True):
+                    if os.path.exists(RESULTS_FILE):
+                        os.remove(RESULTS_FILE)
+                    st.rerun()
+        elif admin_pass:
+            st.error("Неверный пароль.")
+
+# --- ОСНОВНОЙ ЧАТ ---
 st.markdown(f"""
 <div class="main-header">
     <h1>💊 SPIN-Тренажёр: Глиц и Лаваль</h1>
@@ -201,39 +244,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-tab_sim, tab_admin = st.tabs(["💬 Тренажёр визита", "🔒 Результаты сотрудников"])
-
-# ==========================================
-# ВКЛАДКА 1: ТРЕНАЖЁР
-# ==========================================
-with tab_sim:
-    with st.sidebar:
-        st.header("📋 Параметры визита")
-        scenario_name = st.selectbox("Выберите сценарий:", list(SCENARIOS.keys()))
-        scenario = SCENARIOS[scenario_name]
-
-        st.info(f"**Препарат:** {scenario['drug']}\n\n**Конкурент:** {scenario['competitor']}")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔄 Заново", use_container_width=True):
-                st.session_state.messages = []
-                st.session_state.evaluated = False
-                st.rerun()
-        with col2:
-            if st.button("🚪 Выйти", use_container_width=True):
-                st.session_state.authenticated = False
-                st.session_state.messages = []
-                st.rerun()
-
-        st.divider()
-        evaluate_clicked = st.button(
-            "📊 Завершить и сохранить результат",
-            use_container_width=True,
-            type="primary"
-        )
-
-    SYSTEM_PROMPT = f"""
+SYSTEM_PROMPT = f"""
 Ты — врач Асель Аскаровна на приёме. К тебе пришёл медпредставитель с препаратом: {scenario['drug']}.
 Твоё поведение в роли врача:
 1. {scenario['context']}
@@ -251,104 +262,58 @@ with tab_sim:
 ИТОГОВАЯ ОЦЕНКА: X/10
 """
 
-    if st.session_state.get("current_scenario") != scenario_name:
-        st.session_state.current_scenario = scenario_name
-        st.session_state.messages = []
-        st.session_state.evaluated = False
+if st.session_state.get("current_scenario") != scenario_name:
+    st.session_state.current_scenario = scenario_name
+    st.session_state.messages = []
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
+if not st.session_state.messages:
+    st.caption("👋 Начните диалог с Асель Аскаровной — поздоровайтесь и задайте первый ситуационный вопрос.")
+
+for msg in st.session_state.messages:
+    avatar = "🧑‍💼" if msg["role"] == "user" else "👩‍⚕️"
+    with st.chat_message(msg["role"], avatar=avatar):
+        st.markdown(msg["content"])
+
+user_input = st.chat_input("Напишите реплику врачу...")
+is_evaluation = False
+
+if evaluate_clicked:
     if not st.session_state.messages:
-        st.caption("👋 Начните диалог с Асель Аскаровной — поздоровайтесь и задайте первый ситуационный вопрос.")
+        st.warning("Сначала проведите хотя бы небольшой диалог с врачом!")
+    else:
+        user_input = "РАЗБОР"
+        is_evaluation = True
 
-    for msg in st.session_state.messages:
-        avatar = "🧑‍💼" if msg["role"] == "user" else "👩‍⚕️"
-        with st.chat_message(msg["role"], avatar=avatar):
-            st.markdown(msg["content"])
+if user_input:
+    if user_input.strip().upper() == "РАЗБОР":
+        is_evaluation = True
 
-    user_input = st.chat_input("Напишите реплику врачу...")
-    is_evaluation = False
+    if not API_KEY:
+        st.error("Ошибка: не задан OPENROUTER_API_KEY в Streamlit Secrets!")
+        st.stop()
 
-    if evaluate_clicked:
-        if not st.session_state.messages:
-            st.warning("Сначала проведите хотя бы небольшой диалог с врачом!")
-        else:
-            user_input = "РАЗБОР"
-            is_evaluation = True
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user", avatar="🧑‍💼"):
+        st.markdown(user_input)
 
-    if user_input:
-        if user_input.strip().upper() == "РАЗБОР":
-            is_evaluation = True
+    client = OpenAI(api_key=API_KEY, base_url="https://openrouter.ai/api/v1")
 
-        if not API_KEY:
-            st.error("Ошибка конфигурации: не задан OPENROUTER_API_KEY в Streamlit Secrets!")
-            st.stop()
+    with st.chat_message("assistant", avatar="👩‍⚕️"):
+        with st.spinner("Асель Аскаровна думает..." if not is_evaluation else "Формирую разбор и сохраняю результат..."):
+            response = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + st.session_state.messages,
+                temperature=0.6
+            )
+            reply = response.choices[0].message.content
+            st.markdown(reply)
 
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user", avatar="🧑‍💼"):
-            st.markdown(user_input)
+    st.session_state.messages.append({"role": "assistant", "content": reply})
 
-        client = OpenAI(api_key=API_KEY, base_url="https://openrouter.ai/api/v1")
-
-        with st.chat_message("assistant", avatar="👩‍⚕️"):
-            with st.spinner("Асель Аскаровна думает..." if not is_evaluation else "Формирую разбор и сохраняю результат..."):
-                response = client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=[{"role": "system", "content": SYSTEM_PROMPT}] + st.session_state.messages,
-                    temperature=0.6
-                )
-                reply = response.choices[0].message.content
-                st.markdown(reply)
-
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-
-        if is_evaluation:
-            score = extract_score(reply)
-            save_result(st.session_state.employee_name, scenario_name, score, reply)
-            st.toast(f"Результат ({score}) сохранён в базу!", icon="✅")
-
-# ==========================================
-# ВКЛАДКА 2: ПАНЕЛЬ РУКОВОДИТЕЛЯ (АДМИН)
-# ==========================================
-with tab_admin:
-    st.subheader("🔒 Панель руководителя")
-    admin_pass = st.text_input("Введите пароль руководителя", type="password", key="admin_pass_input")
-
-    if admin_pass == ADMIN_PASSWORD:
-        df = load_results()
-
-        if df.empty:
-            st.info("Пока нет сохранённых результатов. Когда сотрудники нажмут «Завершить и сохранить результат», данные появятся здесь.")
-        else:
-            # Метрики сверху
-            c1, c2 = st.columns(2)
-            c1.metric("Всего тренировок", len(df))
-            c2.metric("Уникальных сотрудников", df["Сотрудник"].nunique())
-
-            # Фильтр по сотруднику
-            employees = ["Все"] + sorted(df["Сотрудник"].unique().tolist())
-            selected_emp = st.selectbox("Фильтр по сотруднику:", employees)
-            filtered_df = df if selected_emp == "Все" else df[df["Сотрудник"] == selected_emp]
-
-            st.dataframe(filtered_df, use_container_width=True, hide_index=True)
-
-            # Кнопка скачивания для Excel (utf-8-sig чтобы русский текст не ломался)
-            csv_data = filtered_df.to_csv(index=False).encode("utf-8-sig")
-            col_dl, col_clr = st.columns([2, 1])
-            with col_dl:
-                st.download_button(
-                    label="📥 Скачать отчёт (CSV для Excel)",
-                    data=csv_data,
-                    file_name=f"spin_results_{datetime.now().strftime('%Y%m%d')}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                    type="primary"
-                )
-            with col_clr:
-                if st.button("🗑️ Очистить базу", use_container_width=True):
-                    if os.path.exists(RESULTS_FILE):
-                        os.remove(RESULTS_FILE)
-                    st.rerun()
-    elif admin_pass:
-        st.error("Неверный пароль руководителя.")
+    if is_evaluation:
+        score = extract_score(reply)
+        save_result(st.session_state.employee_name, scenario_name, score, reply)
+        st.toast(f"Результат ({score}) сохранён!", icon="✅")
