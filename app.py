@@ -88,7 +88,7 @@ supabase: Client | None = init_supabase()
 def find_drug_images(prefix: str) -> list:
     found = []
     for suffix in ("_box", "_banner", ""):
-        for ext in ("jpg", "jpeg", "png", "webp"):
+        for ext in ("jpg", "jpeg", "png", "JPG"):
             path = f"{prefix}{suffix}.{ext}"
             if os.path.exists(path):
                 found.append(path)
