@@ -237,19 +237,6 @@ def delete_single_result(row_id):
             return True
     return False
 
-def delete_all_results():
-    if supabase:
-        try:
-            supabase.table("spin_results").delete().gt("id", 0).execute()
-            return True
-        except Exception as e:
-            st.error(f"Не удалось очистить Supabase: {e}")
-            return False
-    elif os.path.exists(RESULTS_FILE):
-        os.remove(RESULTS_FILE)
-        return True
-    return False
-
 def extract_score(text: str) -> str:
     match = re.search(r"ИТОГОВАЯ ОЦЕНКА:\s*(\d+(?:[.,]\d+)?\s*/\s*10)", text, re.IGNORECASE)
     if match:
@@ -377,14 +364,6 @@ if st.session_state.admin_mode:
             use_container_width=True,
             hide_index=True
         )
-
-        # Очистка всей базы с защитой от случайного нажатия
-        with st.expander("⚠️ Очистить всю базу результатов"):
-            confirm_clear = st.checkbox("Я уверен(а), что хочу удалить все записи безвозвратно")
-            if st.button("🗑️ Удалить ВСЕ результаты", disabled=not confirm_clear, type="primary"):
-                if delete_all_results():
-                    st.toast("База очищена!", icon="🗑️")
-                    st.rerun()
 
         st.subheader("📝 Переписки и разборы сотрудников")
         for _, row in filtered_df.iterrows():
