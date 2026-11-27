@@ -263,7 +263,7 @@ if "admin_mode" not in st.session_state:
 if not st.session_state.authenticated:
     st.markdown("""
     <div class="hero-card">
-        <h1>💊 SPIN-Тренажёр Медпреда</h1>
+        <h1>💊 Тренажер ОТС (Глиц/Лаваль)</h1>
         <p>Интерактивный симулятор визитов к врачу • Глиц и Лаваль</p>
         <span class="badge">Seltfar LTD • AI Training</span>
     </div>
@@ -406,7 +406,7 @@ if st.session_state.admin_mode:
 # =========================================================
 st.markdown(f"""
 <div class="hero-card">
-    <h1>💊 SPIN-Тренажёр: Глиц и Лаваль</h1>
+    <h1>💊Тренажер ОТС (Глиц/Лаваль)</h1>
     <p>Сценарий: <b>{scenario_name}</b></p>
     <span class="badge">🧑‍💼 {st.session_state.employee_name}</span>
 </div>
